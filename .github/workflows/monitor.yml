@@ -2,7 +2,7 @@ name: Monitor company reports
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # каждый день в 9:00 UTC (12:00 МСК)
+    - cron: '0 9 * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,69 +16,51 @@ jobs:
       - name: Check companies
         id: check
         run: |
-          ADESK=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/7415098349" \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
-          MAKSIMUM=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/3233502746" \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
-          echo "adesk_year=$ADESK" >> $GITHUB_OUTPUT
-          echo "maksimum_year=$MAKSIMUM" >> $GITHUB_OUTPUT
-          echo "Адеск последний год: $ADESK"
-          echo "Максимум Веб последний год: $MAKSIMUM"
+          ADESK=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/7415098349" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
+          MAKSIMUM=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/3233502746" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
+          echo "adesk_year=${ADESK}" >> "$GITHUB_OUTPUT"
+          echo "maksimum_year=${MAKSIMUM}" >> "$GITHUB_OUTPUT"
 
-      - name: Load previous state
-        id: prev
+      - name: Notify and update state
+        env:
+          ADESK_NOW: ${{ steps.check.outputs.adesk_year }}
+          MAKSIMUM_NOW: ${{ steps.check.outputs.maksimum_year }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: |
           ADESK_PREV=$(cat state/adesk.txt 2>/dev/null || echo 'none')
           MAKSIMUM_PREV=$(cat state/maksimum.txt 2>/dev/null || echo 'none')
-          echo "adesk=$ADESK_PREV" >> $GITHUB_OUTPUT
-          echo "maksimum=$MAKSIMUM_PREV" >> $GITHUB_OUTPUT
 
-      - name: Check if changed
-        id: changed
-        run: |
-          ADESK_CHANGED=false
-          MAKSIMUM_CHANGED=false
-          if [ "${{ steps.check.outputs.adesk_year }}" != "${{ steps.prev.outputs.adesk }}" ] && [ "${{ steps.prev.outputs.adesk }}" != "none" ]; then
-            ADESK_CHANGED=true
+          CHANGED=false
+          MSG=""
+
+          if [ "${ADESK_PREV}" != "none" ] && [ "${ADESK_NOW}" != "${ADESK_PREV}" ]; then
+            CHANGED=true
+            MSG="${MSG}Адеск (ИНН 7415098349): было ${ADESK_PREV}, стало ${ADESK_NOW}\n"
           fi
-          if [ "${{ steps.check.outputs.maksimum_year }}" != "${{ steps.prev.outputs.maksimum }}" ] && [ "${{ steps.prev.outputs.maksimum }}" != "none" ]; then
-            MAKSIMUM_CHANGED=true
-          fi
-          if [ "$ADESK_CHANGED" = "true" ] || [ "$MAKSIMUM_CHANGED" = "true" ]; then
-            echo "any=true" >> $GITHUB_OUTPUT
-          else
-            echo "any=false" >> $GITHUB_OUTPUT
+          if [ "${MAKSIMUM_PREV}" != "none" ] && [ "${MAKSIMUM_NOW}" != "${MAKSIMUM_PREV}" ]; then
+            CHANGED=true
+            MSG="${MSG}Максимум Веб (ИНН 3233502746): было ${MAKSIMUM_PREV}, стало ${MAKSIMUM_NOW}\n"
           fi
 
-      - name: Send email if changed
-        if: steps.changed.outputs.any == 'true'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.GMAIL_USER }}
-          password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          to: iplaxa@mail.ru
-          from: Мониторинг компаний
-          subject: "Новая отчётность компаний"
-          body: |
-            Появились обновления в отчётности:
+          if [ "${CHANGED}" = "true" ]; then
+            BODY="Появились обновления в отчётности:\n\n${MSG}\nСмотреть: https://company-dashboard-billowing-darkness-2208.fly.dev/compare.html"
+            echo -e "${BODY}" | curl -s \
+              --url "smtps://smtp.gmail.com:465" \
+              --ssl-reqd \
+              --user "${GMAIL_USER}:${GMAIL_PASS}" \
+              --mail-from "${GMAIL_USER}" \
+              --mail-rcpt "iplaxa@mail.ru" \
+              --upload-file - \
+              --header "Subject: Новая отчётность компаний" \
+              --header "From: Мониторинг <${GMAIL_USER}>" \
+              --header "To: iplaxa@mail.ru" \
+              --header "Content-Type: text/plain; charset=utf-8"
+          fi
 
-            Адеск (ИНН 7415098349):
-              было: ${{ steps.prev.outputs.adesk }}
-              стало: ${{ steps.check.outputs.adesk_year }}
-
-            Максимум Веб (ИНН 3233502746):
-              было: ${{ steps.prev.outputs.maksimum }}
-              стало: ${{ steps.check.outputs.maksimum_year }}
-
-            Смотреть: https://company-dashboard-billowing-darkness-2208.fly.dev/compare.html
-
-      - name: Save state
-        run: |
           mkdir -p state
-          echo "${{ steps.check.outputs.adesk_year }}" > state/adesk.txt
-          echo "${{ steps.check.outputs.maksimum_year }}" > state/maksimum.txt
+          echo "${ADESK_NOW}" > state/adesk.txt
+          echo "${MAKSIMUM_NOW}" > state/maksimum.txt
 
       - name: Commit state
         run: |
