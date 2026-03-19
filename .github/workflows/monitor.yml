@@ -1,0 +1,72 @@
+name: Monitor company reports
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # каждый день в 9:00 UTC (12:00 МСК)
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check companies
+        id: check
+        run: |
+          ADESK=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/7415098349" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
+          MAKSIMUM=$(curl -s "https://company-dashboard-billowing-darkness-2208.fly.dev/api/company/3233502746" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['finance']['years'][-1])")
+          echo "adesk_year=$ADESK" >> $GITHUB_OUTPUT
+          echo "maksimum_year=$MAKSIMUM" >> $GITHUB_OUTPUT
+          echo "Адеск последний год: $ADESK"
+          echo "Максимум Веб последний год: $MAKSIMUM"
+
+      - name: Load previous state
+        id: prev
+        run: |
+          echo "adesk=$(cat state/adesk.txt 2>/dev/null || echo 'none')" >> $GITHUB_OUTPUT
+          echo "maksimum=$(cat state/maksimum.txt 2>/dev/null || echo 'none')" >> $GITHUB_OUTPUT
+
+      - name: Send email if changed
+        if: |
+          (steps.check.outputs.adesk_year != steps.prev.outputs.adesk && steps.prev.outputs.adesk != 'none') ||
+          (steps.check.outputs.maksimum_year != steps.prev.outputs.maksimum && steps.prev.outputs.maksimum != 'none')
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_USER }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: iplaxa@mail.ru
+          from: Мониторинг компаний
+          subject: "Новая отчётность компаний"
+          body: |
+            Появились обновления в отчётности:
+
+            Адеск (ИНН 7415098349):
+              было: ${{ steps.prev.outputs.adesk }}
+              стало: ${{ steps.check.outputs.adesk_year }}
+
+            Максимум Веб (ИНН 3233502746):
+              было: ${{ steps.prev.outputs.maksimum }}
+              стало: ${{ steps.check.outputs.maksimum_year }}
+
+            Смотреть: https://company-dashboard-billowing-darkness-2208.fly.dev/compare.html
+
+      - name: Save state
+        run: |
+          mkdir -p state
+          echo "${{ steps.check.outputs.adesk_year }}" > state/adesk.txt
+          echo "${{ steps.check.outputs.maksimum_year }}" > state/maksimum.txt
+
+      - name: Commit state
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add state/
+          git diff --staged --quiet || git commit -m "chore: update state $(date +%Y-%m-%d)"
+          git push
