@@ -28,13 +28,30 @@ jobs:
       - name: Load previous state
         id: prev
         run: |
-          echo "adesk=$(cat state/adesk.txt 2>/dev/null || echo 'none')" >> $GITHUB_OUTPUT
-          echo "maksimum=$(cat state/maksimum.txt 2>/dev/null || echo 'none')" >> $GITHUB_OUTPUT
+          ADESK_PREV=$(cat state/adesk.txt 2>/dev/null || echo 'none')
+          MAKSIMUM_PREV=$(cat state/maksimum.txt 2>/dev/null || echo 'none')
+          echo "adesk=$ADESK_PREV" >> $GITHUB_OUTPUT
+          echo "maksimum=$MAKSIMUM_PREV" >> $GITHUB_OUTPUT
+
+      - name: Check if changed
+        id: changed
+        run: |
+          ADESK_CHANGED=false
+          MAKSIMUM_CHANGED=false
+          if [ "${{ steps.check.outputs.adesk_year }}" != "${{ steps.prev.outputs.adesk }}" ] && [ "${{ steps.prev.outputs.adesk }}" != "none" ]; then
+            ADESK_CHANGED=true
+          fi
+          if [ "${{ steps.check.outputs.maksimum_year }}" != "${{ steps.prev.outputs.maksimum }}" ] && [ "${{ steps.prev.outputs.maksimum }}" != "none" ]; then
+            MAKSIMUM_CHANGED=true
+          fi
+          if [ "$ADESK_CHANGED" = "true" ] || [ "$MAKSIMUM_CHANGED" = "true" ]; then
+            echo "any=true" >> $GITHUB_OUTPUT
+          else
+            echo "any=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Send email if changed
-        if: |
-          (steps.check.outputs.adesk_year != steps.prev.outputs.adesk && steps.prev.outputs.adesk != 'none') ||
-          (steps.check.outputs.maksimum_year != steps.prev.outputs.maksimum && steps.prev.outputs.maksimum != 'none')
+        if: steps.changed.outputs.any == 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
